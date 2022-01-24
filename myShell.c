@@ -7,7 +7,9 @@ int main() {
 
 void initShell() {
     char **commandPtr = malloc(sizeof(char *));
-    *commandPtr = malloc(sizeof(char) * 1000);
+    *commandPtr = NULL;
+
+    char *ptr2 = *commandPtr;
     pid_t *processes = malloc(sizeof(pid_t));
     int length = 0;
 
@@ -16,7 +18,16 @@ void initShell() {
     while(1) {
         // wait for user *commandPtr input
         printf(">");
-        fgets(*commandPtr, 1000, stdin);
+        
+        // reset string to ensure we have 100 chars 
+        // because removing preceding memory reduces memory
+        if (*commandPtr != NULL) {
+            free(*commandPtr);
+        }
+        *commandPtr = malloc(sizeof(char) * 100);
+
+        strcpy(*commandPtr, ""); // reset string
+        fgets(*commandPtr, 100, stdin);
         trimString(commandPtr);
         
         // check the type of *commandPtr and execute accordingly
@@ -27,6 +38,7 @@ void initShell() {
             freeList(commandPtr, 1);
             killShell(processes, length);
         }
+
         forkProcess(*commandPtr, 1); 
     }
 }
@@ -67,6 +79,7 @@ void forkProcess(char *command, int currentDir) {
     if (command == NULL) {
         return;
     }
+
     // get command name without args
     int paramNum = 0;
     char **parameters = getParams(command, &paramNum);
@@ -86,10 +99,14 @@ void forkProcess(char *command, int currentDir) {
     else {
         // execute program
         status = execvp(parameters[0], parameters);
+
+        if(status == -1) {
+            perror("execvp");
+            exit(EXIT_FAILURE);
+        }
     }
-    
+
     freeList(parameters, paramNum);
-    return;
 }
 
 char **getParams(char *command, int *length) {
@@ -100,6 +117,7 @@ char **getParams(char *command, int *length) {
     char **params = malloc(sizeof(char *));
     int spacePreceded = 1; // the next character follows a space if set to 1. 
     *length = 0; // num of parameters
+    int paramLen = 0;
 
     for (int i = 0; i < strlen(command); i++) {
         // check if current char is a space and set spacePreceded to 1 
@@ -107,7 +125,6 @@ char **getParams(char *command, int *length) {
         if (isspace(command[i])) {
             // only edit params if it not an extra space
             if (spacePreceded != 1 && params[*length] != NULL) {
-                params[*length][strlen(params[*length])] = '\0';
                 params[*length] = realloc(params[*length], sizeof(char) * (strlen(params[*length]) + 1));
                 (*length)++; // num of params incremented after last one's assigned
             }
@@ -121,13 +138,14 @@ char **getParams(char *command, int *length) {
             params = realloc(params, sizeof(char *) * ((*length) + 1));
             params[*length] = malloc(sizeof(char) * (strlen(command) + 1));
             strcpy(params[*length], "");
+            paramLen = 0;
             spacePreceded = 0;
         }
-        params[*length][strlen(params[*length])] = command[i];
-        
+        params[*length][paramLen++] = command[i];
+        params[*length][paramLen] = '\0';
+
         // check if last char in the string and set null character in the end of it 
         if(strlen(command) == (i + 1)) {
-            params[*length][strlen(params[*length])] = '\0';
             params[*length] = realloc(params[*length], sizeof(char) * (strlen(params[*length]) + 1));
             (*length)++;
         }
@@ -146,8 +164,7 @@ void freeList(char **list, int length) {
         if (list[i] != NULL) {
             free(list[i]);
         }
-    }
-    
+    }   
     free(list);
 }
 
