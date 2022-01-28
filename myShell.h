@@ -15,7 +15,7 @@ void initShell();
 void trimString(char **ptr);
 
 // Function starts a new specified process
-void forkProcess(char *command, int currentDir);
+void forkProcess(char *command, int currentDir, int background, pid_t **processes, int *length);
 
 // Function returns an array of strings representing parameters in the command string
 char **getParams(char *command, int *length);
@@ -24,5 +24,5 @@ char **getParams(char *command, int *length);
 void freeList(char **list, int length);
 
 // Function kills all processes and ends program exits program
-void killShell(pid_t *children, int length);
+void killShell(pid_t **children, int length);
 

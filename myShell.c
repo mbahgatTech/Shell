@@ -7,10 +7,11 @@ int main() {
 
 void initShell() {
     char **commandPtr = malloc(sizeof(char *));
-    *commandPtr = NULL;
+    commandPtr[0] = malloc(sizeof(char) * 1000);
+    strcpy(*commandPtr, ""); 
 
-    char *ptr2 = *commandPtr;
-    pid_t *processes = malloc(sizeof(pid_t));
+    pid_t **processes = malloc(sizeof(pid_t *));
+    processes[0] = malloc(sizeof(pid_t));
     int length = 0;
 
 
@@ -19,44 +20,49 @@ void initShell() {
         // wait for user *commandPtr input
         printf(">");
         
-        // reset string to ensure we have 100 chars 
-        // because removing preceding memory reduces memory
-        if (*commandPtr != NULL) {
-            free(*commandPtr);
-        }
-        *commandPtr = malloc(sizeof(char) * 100);
+        // reset string 
+        strcpy(*commandPtr, ""); 
 
-        strcpy(*commandPtr, ""); // reset string
+        // take command input
         fgets(*commandPtr, 100, stdin);
         trimString(commandPtr);
         
-        // check the type of *commandPtr and execute accordingly
+        // check the type of command and execute accordingly
         if (strlen(*commandPtr) == 0) {
             continue;
         }
-        if (strcmp(*commandPtr, "exit") == 0) {
+        else if (strcmp(*commandPtr, "exit") == 0) {
             freeList(commandPtr, 1);
             killShell(processes, length);
         }
-
-        forkProcess(*commandPtr, 1); 
+        
+        // check for & in last character for background processes
+        if ((*commandPtr)[strlen(*commandPtr) - 1] == '&'){ 
+            forkProcess(*commandPtr, 1, 1, processes, &length); 
+        }
+        else {
+            forkProcess(*commandPtr, 1, 0, NULL, NULL); 
+        }
     }
 }
 
 void trimString(char **ptr) {
     int i = 0;
+    int preceded = 0;
 
-    // remove leading spaces in the *ptr
+    // remove leading spaces in the string
     for(i = 0; i < strlen(*ptr); i++) {
-        // increment *ptr pointer to remove the space from beginning of *ptr
-        // we decrement i because we moved up in memory by 1 index using our pointer
+        // set preceded if string begins with space
         if (isspace((*ptr)[i])) {
-            (*ptr)++;
-            i--;
-            // printf("address: %p\n", *ptr);
+            preceded = 1;
+        }
+        else if (preceded == 1) { 
+            // trim string with an offset of i (number of spaces) when char is found
+            strcpy(*ptr, *ptr + sizeof(char) * i);
+            break; // exit loop when a character is found
         }
         else {
-            break; // exit loop when a character is found
+            break; // entered when string doesnt have preceding chars
         }
     }
     
@@ -74,7 +80,7 @@ void trimString(char **ptr) {
     } 
 }
 
-void forkProcess(char *command, int currentDir) {
+void forkProcess(char *command, int currentDir, int background, pid_t **processes, int *length) {
     // check for null command 
     if (command == NULL) {
         return;
@@ -83,18 +89,32 @@ void forkProcess(char *command, int currentDir) {
     // get command name without args
     int paramNum = 0;
     char **parameters = getParams(command, &paramNum);
-    
-    pid_t newProcess = fork();
+
+    pid_t newProcess = fork(); // returns child pid
     int status;
 
     if (newProcess < 0) {
         perror("fork");
-        exit(EXIT_FAILURE);
+        return;
     }
     
-    // block parent process till child completes execution
+    // parent process
     if (newProcess > 0) {
+        // return parent without waiting for child
+        if (background == 1) {
+            freeList(parameters, paramNum);
+            
+            // add pid to the processes array and increment length
+            if (processes != NULL && processes[0] != NULL && length != NULL) {
+                processes[0] = realloc(processes[0], sizeof(pid_t) * ((*length) + 1));
+                processes[0][(*length)++] = newProcess;
+            }
+            return;
+        }
+
+        // block parent process till child completes execution
         waitpid(newProcess, &status, 0);
+        freeList(parameters, paramNum);
     }
     else {
         // execute program
@@ -102,11 +122,12 @@ void forkProcess(char *command, int currentDir) {
 
         if(status == -1) {
             perror("execvp");
-            exit(EXIT_FAILURE);
         }
+
+        kill(getppid(), SIGCHLD);
+        freeList(parameters, paramNum);
     }
 
-    freeList(parameters, paramNum);
 }
 
 char **getParams(char *command, int *length) {
@@ -169,24 +190,25 @@ void freeList(char **list, int length) {
 }
 
 
-void killShell(pid_t *children, int length) {
+void killShell(pid_t **children, int length) {
     printf ("myShell terminating...\n");
     
     int killVal = -1;
-
+    
     // kill all child processes
     for (int i = 0; i < length; i++) {
-        killVal = kill(children[i], SIGKILL);
-        
-        // print system error and exit
+        if (children != NULL && children[0][i]) {
+            killVal = kill(children[0][i], SIGKILL);
+        }
+
+        // report error tryin to kill a process
         if (killVal == -1) {
             perror("kill");
-            free(children);
-            exit(EXIT_FAILURE);
         }
-    } 
+    }
 
-    printf("[Process completed]\n");
+    printf("\n[Process completed]\n");
+    free(children[0]);
     free(children);
     exit(EXIT_SUCCESS);
 }
