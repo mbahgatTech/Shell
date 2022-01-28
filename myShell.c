@@ -8,20 +8,29 @@ int main() {
 void initShell() {
     char **commandPtr = malloc(sizeof(char *));
     commandPtr[0] = malloc(sizeof(char) * 1000);
+    char *temp, *buffer = malloc(sizeof(char) * 1000);
     strcpy(*commandPtr, ""); 
+    
 
     pid_t **processes = malloc(sizeof(pid_t *));
     processes[0] = malloc(sizeof(pid_t));
     int length = 0;
 
-
+    FILE *openFile = NULL;
+    int background = 0;
+    int outFileNum = -1; // used to revert fopen
+    int inFileNum = -1;
+    
     // infinite loop waiting for and handling user *commandPtr input
     while(1) {
-        // wait for user *commandPtr input
+        // wait for user command input
         printf(">");
         
-        // reset string 
+        // reset command and background flag
         strcpy(*commandPtr, ""); 
+        background = 0;
+        outFileNum = dup(fileno(stdout));
+        inFileNum = dup(fileno(stdin));
 
         // take command input
         fgets(*commandPtr, 100, stdin);
@@ -33,16 +42,46 @@ void initShell() {
         }
         else if (strcmp(*commandPtr, "exit") == 0) {
             freeList(commandPtr, 1);
+            free(buffer);
             killShell(processes, length);
         }
         
-        // check for & in last character for background processes
-        if ((*commandPtr)[strlen(*commandPtr) - 1] == '&'){ 
-            forkProcess(*commandPtr, 1, 1, processes, &length); 
-        }
-        else {
-            forkProcess(*commandPtr, 1, 0, NULL, NULL); 
-        }
+        // copy command into buffer and tokenize it with spaces
+        buffer = realloc(buffer, sizeof(char) * (strlen(*commandPtr) + 1));
+        strcpy(buffer, *commandPtr);
+        temp = strtok(buffer, " ");
+        strcpy(*commandPtr, "");
+        
+        // loop through all tokens and look for > or < tokens
+        do {
+            if (strcmp(temp, ">") == 0) {
+                // next token is file name
+                openFile = freopen(strtok(NULL, " "), "w", stdout);
+                break;
+            }
+            else if (strcmp(temp, "<") == 0) {
+                // next token is input file name
+                openFile = freopen(strtok(NULL, " "), "r", stdin);
+                break;
+            }
+            else if (strcmp(temp, "&") == 0) {
+                // assumed to be last argument (turn on background processes)
+                background = 1;
+                break;
+            }
+            else {
+                strcat(*commandPtr, temp);
+                strcat(*commandPtr, " ");
+            }
+        } while (temp = strtok(NULL, " "));
+        
+        // remove preceding and trailing spaces then execute command
+        trimString(commandPtr);
+        forkProcess(*commandPtr, 1, background, processes, &length); 
+
+        // reset both standard streams
+        dup2(outFileNum, fileno(stdout));    
+        dup2(inFileNum, fileno(stdin));
     }
 }
 
@@ -123,9 +162,10 @@ void forkProcess(char *command, int currentDir, int background, pid_t **processe
         if(status == -1) {
             perror("execvp");
         }
-
-        kill(getppid(), SIGCHLD);
+        
         freeList(parameters, paramNum);
+        // signal that process ended
+        kill(getppid(), SIGCHLD);
     }
 
 }
@@ -146,6 +186,14 @@ char **getParams(char *command, int *length) {
         if (isspace(command[i])) {
             // only edit params if it not an extra space
             if (spacePreceded != 1 && params[*length] != NULL) {
+                // > < arguments arent apart of the command and
+                // will be handled by initShell function 
+                if (strcmp(params[*length], ">") == 0 || 
+                    strcmp(params[*length], "<") == 0) {
+                    // ommit the argument and break out of loop
+                    free(params[*length]);
+                    break;
+                }
                 params[*length] = realloc(params[*length], sizeof(char) * (strlen(params[*length]) + 1));
                 (*length)++; // num of params incremented after last one's assigned
             }
@@ -170,6 +218,12 @@ char **getParams(char *command, int *length) {
             params[*length] = realloc(params[*length], sizeof(char) * (strlen(params[*length]) + 1));
             (*length)++;
         }
+    }
+
+    // remove & from end of the command if present
+    if (strcmp(params[(*length) - 1], "&") == 0) {
+        // ommit the argument and decrement length
+        free(params[--(*length)]);
     }
     
     return params;
