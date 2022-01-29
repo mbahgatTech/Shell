@@ -18,8 +18,9 @@ void initShell() {
 
     FILE *openFile = NULL;
     int background = 0;
-    int outFileNum = -1; // used to revert fopen
-    int inFileNum = -1;
+    int outFileNum = -1; // used to revert freopen on stdout
+    int inFileNum = -1;// used to revert freopen on stdin
+    int pipesEnabled = 0;
     
     // infinite loop waiting for and handling user *commandPtr input
     while(1) {
@@ -29,6 +30,7 @@ void initShell() {
         // reset command and background flag
         strcpy(*commandPtr, ""); 
         background = 0;
+        pipesEnabled = 0;
         outFileNum = dup(fileno(stdout));
         inFileNum = dup(fileno(stdin));
 
@@ -52,7 +54,7 @@ void initShell() {
         temp = strtok(buffer, " ");
         strcpy(*commandPtr, "");
         
-        // loop through all tokens and look for > or < tokens
+        // loop through all tokens and look for >, < or & tokens
         do {
             if (strcmp(temp, ">") == 0) {
                 // next token is file name
@@ -69,19 +71,28 @@ void initShell() {
                 background = 1;
                 break;
             }
-            else {
-                strcat(*commandPtr, temp);
-                strcat(*commandPtr, " ");
+            else if (strcmp(temp, "|") == 0) {
+                // tur pipes flag on
+                pipesEnabled = 1; 
             }
+
+            strcat(*commandPtr, temp);
+            strcat(*commandPtr, " ");
         } while (temp = strtok(NULL, " "));
         
         // remove preceding and trailing spaces then execute command
         trimString(commandPtr);
-        forkProcess(*commandPtr, 1, background, processes, &length); 
+
+        if (pipesEnabled == 1) {
+            pipeCommand(*commandPtr, processes, &length);
+        }
+        else {
+            forkProcess(*commandPtr, 1, background, processes, &length); 
+        }
 
         // reset both standard streams
-        dup2(outFileNum, fileno(stdout));    
-        dup2(inFileNum, fileno(stdin));
+        dup2(outFileNum, STDOUT_FILENO);
+        dup2(inFileNum, STDIN_FILENO);
     }
 }
 
@@ -228,6 +239,114 @@ char **getParams(char *command, int *length) {
     
     return params;
 }
+
+void pipeCommand(char *command, pid_t **processes, int *length) {
+    // check for null command 
+    if (command == NULL) {
+        return;
+    }
+    
+    // split command into 2 commands (before and after |)
+    char *beforeCommand;
+    char *afterCommand;
+    getCommands(command, 1, &beforeCommand);
+    getCommands(command, 0, &afterCommand);
+    
+    // remove trailing spaces
+    trimString(&beforeCommand);
+    trimString(&afterCommand);
+
+    // get parameters of both commands
+    int firstNum = 0;
+    char **firstParams = getParams(beforeCommand, &firstNum);
+    int secondNum = 0;
+    char **secondParams = getParams(afterCommand, &secondNum);
+    
+    int outFileNum = dup(fileno(stdout));
+    int inFileNum = dup(fileno(stdin));
+
+    // initialize communication pipe
+    int commPipe[2];
+    pipe(commPipe);
+
+    pid_t newProcess = fork(); // returns child pid
+    int status;
+
+    if (newProcess < 0) {
+        perror("fork");
+        return;
+    }
+    
+    // child process should execute first command and send it to parent
+    if (newProcess > 0) { 
+        close(commPipe[1]);
+        dup2(commPipe[0], STDIN_FILENO);
+        close(commPipe[0]);
+
+        char inputString[500];
+        status = execvp(secondParams[0], secondParams);
+        while(read(STDIN_FILENO, inputString, sizeof(char) * 500) > 0) {
+            dup2(outFileNum, STDOUT_FILENO);
+        }
+        
+        free(beforeCommand);
+        free(afterCommand);
+
+        freeList(firstParams, firstNum);
+        freeList(secondParams, secondNum);
+    }
+    else {
+        close(commPipe[0]);
+        dup2(commPipe[1], STDOUT_FILENO);
+        close(commPipe[1]);
+        status = execvp(firstParams[0], firstParams);
+
+        if (status == -1) {
+            perror("execvp");
+        }
+        
+        free(beforeCommand);
+        free(afterCommand);
+        freeList(firstParams, firstNum);
+        freeList(secondParams, secondNum);
+        // signal that process ended
+        kill(getppid(), SIGCHLD);
+    }
+}
+
+void getCommands(char *command, int before, char **target) {
+    if (command == NULL) {
+        return;
+    }
+    
+    char *buffer = malloc(sizeof(char) * (strlen(command) + 1));
+    char *temp;
+    
+    *target = malloc(sizeof(char));
+    strcpy(*target, "");
+    strcpy(buffer, command);
+    temp = strtok(buffer, " ");
+    
+    do {
+        // check if call requires second command when
+        // we hit a "|" token, resets target when entered
+        if (strcmp(temp, "|") == 0 && before == 0) {
+            strcpy(*target, "");
+        }
+        else if (strcmp(temp, "|") == 0) { 
+            // means we needed first command and we already got it
+            free(buffer);
+            return;
+        }
+        
+        // concatenate each word of the command to target
+        *target = realloc(*target, sizeof(char) * (strlen(*target) + strlen(temp) + 2));
+        strcat(*target, temp);
+        strcat(*target, " ");
+    } while (temp = strtok(NULL, " "));
+
+    free(buffer);
+} 
 
 void freeList(char **list, int length) {
     if (list == NULL) {
