@@ -13,91 +13,50 @@ void initShell() {
 
     char **commandPtr = malloc(sizeof(char *));
     commandPtr[0] = malloc(sizeof(char) * 1000);
-    char *temp, *buffer = malloc(sizeof(char) * 1000);
     strcpy(*commandPtr, ""); 
 
     pid_t **processes = malloc(sizeof(pid_t *));
     processes[0] = malloc(sizeof(pid_t));
     int length = 0;
 
+    
+    // open profile file and execute its commands
     FILE *openFile = NULL;
-    int background = 0;
-    int outFileNum = -1; // used to revert freopen on stdout
-    int inFileNum = -1;// used to revert freopen on stdin
-    int pipesEnabled = 0;
+    openFile = fopen("~/.CIS3110_profile", "r");
+    while (openFile && !feof(openFile)) {
+        // take each command from a line in the file untill end of file
+        fgets(*commandPtr, 100, openFile);
+        trimString(commandPtr);
+        
+        // profile shoudlnt have an exit command if it wants to allow
+        // user given commands
+        if (strcmp(*commandPtr, "exit") == 0) {
+            freeList(commandPtr, 1);
+            killShell(processes, length);
+        }
+
+        parseCommand(commandPtr, processes, &length);
+    }
+
+    if (openFile) {
+        fclose(openFile);
+    }
     
     // infinite loop waiting for and handling user *commandPtr input
     while(1) {
-        // wait for user command input
         printf(">");
-        
-        // reset command and background flag
         strcpy(*commandPtr, ""); 
-        background = 0;
-        pipesEnabled = 0;
-        outFileNum = dup(fileno(stdout));
-        inFileNum = dup(fileno(stdin));
 
         // take command input
         fgets(*commandPtr, 100, stdin);
         trimString(commandPtr);
         
-        // check the type of command and execute accordingly
-        if (strlen(*commandPtr) == 0) {
-            continue;
-        }
-        else if (strcmp(*commandPtr, "exit") == 0) {
+        // check the command is exit and kill shell if entered
+        if (strcmp(*commandPtr, "exit") == 0) {
             freeList(commandPtr, 1);
-            free(buffer);
             killShell(processes, length);
         }
-        
-        // copy command into buffer and tokenize it with spaces
-        buffer = realloc(buffer, sizeof(char) * (strlen(*commandPtr) + 1));
-        strcpy(buffer, *commandPtr);
-        temp = strtok(buffer, " ");
-        strcpy(*commandPtr, "");
-        
-        // loop through all tokens and look for >, <,  & or | tokens
-        do {
-            if (strcmp(temp, ">") == 0) {
-                // next token is file name
-                openFile = freopen(strtok(NULL, " "), "w", stdout);
-                break;
-            }
-            else if (strcmp(temp, "<") == 0) {
-                // next token is input file name
-                openFile = freopen(strtok(NULL, " "), "r", stdin);
-                break;
-            }
-            else if (strcmp(temp, "&") == 0) {
-                // assumed to be last argument (turn on background processes)
-                background = 1;
-                break;
-            }
-
-            if (strcmp(temp, "|") == 0) {
-                // turn pipes flag on
-                pipesEnabled = 1; 
-            }
-
-            strcat(*commandPtr, temp);
-            strcat(*commandPtr, " ");
-        } while (temp = strtok(NULL, " "));
-        
-        // remove preceding and trailing spaces then execute command
-        trimString(commandPtr);
-
-        if (pipesEnabled == 1) {
-            pipeCommand(*commandPtr, processes, &length);
-        }
-        else {
-            forkProcess(*commandPtr, 1, background, processes, &length); 
-        }
-
-        // reset both standard streams
-        dup2(outFileNum, STDOUT_FILENO);
-        dup2(inFileNum, STDIN_FILENO);
+        parseCommand(commandPtr, processes, &length);
     }
 }
 
@@ -135,7 +94,71 @@ void trimString(char **ptr) {
     } 
 }
 
-void forkProcess(char *command, int currentDir, int background, pid_t **processes, int *length) {
+void parseCommand(char **commandPtr, pid_t **processes, int *length) {
+    // no command given
+    if (!commandPtr || !*commandPtr || strlen(*commandPtr) == 0) {
+        return;
+    }
+
+    char *temp, *buffer;
+    int background = 0, pipesEnabled = 0;
+    int outFileNum = dup(STDOUT_FILENO);
+    int inFileNum = dup(STDIN_FILENO);
+    FILE *openFile;
+
+    
+    // copy command into buffer and tokenize it with spaces
+    buffer = malloc(sizeof(char) * (strlen(*commandPtr) + 1));
+    strcpy(buffer, *commandPtr);
+    temp = strtok(buffer, " ");
+    strcpy(*commandPtr, "");
+    
+    // check the type of command and execute accordingly //
+    // loop through all tokens and look for >, <,  & or | tokens
+    do {
+        if (strcmp(temp, ">") == 0) {
+            // next token is file name
+            openFile = freopen(strtok(NULL, " "), "w", stdout);
+            break;
+        }
+        else if (strcmp(temp, "<") == 0) {
+            // next token is input file name
+            openFile = freopen(strtok(NULL, " "), "r", stdin);
+            break;
+        }
+        else if (strcmp(temp, "&") == 0) {
+            // assumed to be last argument (turn on background processes)
+            background = 1;
+            break;
+        }
+
+        if (strcmp(temp, "|") == 0) {
+            // turn pipes flag on
+            pipesEnabled = 1; 
+        }
+
+        strcat(*commandPtr, temp);
+        strcat(*commandPtr, " ");
+    } while (temp = strtok(NULL, " "));
+    
+    // remove preceding and trailing spaces then execute command
+    trimString(commandPtr);
+
+    if (pipesEnabled == 1) {
+        pipeCommand(*commandPtr);
+    }
+    else {
+        forkProcess(*commandPtr, background, processes, length); 
+    }
+
+    // reset both standard streams
+    dup2(outFileNum, STDOUT_FILENO);
+    dup2(inFileNum, STDIN_FILENO);
+
+    free(buffer);
+}
+
+void forkProcess(char *command, int background, pid_t **processes, int *length) {
     // check for null command 
     if (command == NULL) {
         return;
@@ -177,11 +200,11 @@ void forkProcess(char *command, int currentDir, int background, pid_t **processe
 
         if(status == -1) {
             perror("execv");
-            exit(EXIT_FAILURE);
         }
         
         // signal that process ended
         kill(getppid(), SIGCHLD);
+        exit(status);
     }
 
 }
@@ -254,14 +277,14 @@ char **getParams(char *command, int *length) {
     return params;
 }
 
-void pipeCommand(char *command, pid_t **processes, int *length) {
+void pipeCommand(char *command) {
     // check for null command 
     if (command == NULL) {
         return;
     }
     
     // split command into 2 commands (before and after |)
-    char *beforeCommand;
+    char *beforeCommand; 
     char *afterCommand;
     getCommands(command, 1, &beforeCommand);
     getCommands(command, 0, &afterCommand);
@@ -315,6 +338,8 @@ void pipeCommand(char *command, pid_t **processes, int *length) {
             if (status == -1) {
                 perror("execv");
             }
+
+            exit(status);
         }
         else {
             // copy commPipe[1] of the grandchild process into stdout index of 

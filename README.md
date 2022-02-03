@@ -11,6 +11,7 @@ A POSIX based shell program.
   * myPath: Default = /bin. 
   * myHISTFILE: Default = ~/.CIS3110_history.
   * myHOME: Home directory variable.
+- Added profile execution on startup functionality; reads set of startup commands from .CIS3110_profile in the user's home directory. Each command should be on its own line.
 
 ## Download & Run Information
 - Clone the repository into your local POSIX machine.

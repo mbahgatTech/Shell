@@ -14,11 +14,21 @@ void initShell();
 // Function removes leading and trailing spaces in a string
 void trimString(char **ptr);
 
+// Function parses the given command and executes it
+void parseCommand(char **commandPtr, pid_t **processes, int *length);
+
 // Function starts a new specified process
-void forkProcess(char *command, int currentDir, int background, pid_t **processes, int *length);
+void forkProcess(char *command, int background, pid_t **processes, int *length);
 
 // Function returns an array of strings representing parameters in the command string
 char **getParams(char *command, int *length);
+
+// Function executes pipe commands
+void pipeCommand(char *command); 
+
+// Function splits the command into 2 commands before and after the | symbol and
+// returns the requested command into target indicated by parameter before
+void getCommands(char *command, int before, char **target);
 
 // Function frees an array of strings given the length
 void freeList(char **list, int length);
