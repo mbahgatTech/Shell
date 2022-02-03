@@ -6,11 +6,15 @@ int main() {
 }
 
 void initShell() {
+    // set environment variables on startup
+    setenv("myPath", "/bin", 1);
+    setenv("myHISTFILE", "~/.CIS3110_history", 1);
+    setenv("myHOME", getenv("HOME"), 1);
+
     char **commandPtr = malloc(sizeof(char *));
     commandPtr[0] = malloc(sizeof(char) * 1000);
     char *temp, *buffer = malloc(sizeof(char) * 1000);
     strcpy(*commandPtr, ""); 
-    
 
     pid_t **processes = malloc(sizeof(pid_t *));
     processes[0] = malloc(sizeof(pid_t));
@@ -18,8 +22,9 @@ void initShell() {
 
     FILE *openFile = NULL;
     int background = 0;
-    int outFileNum = -1; // used to revert fopen
-    int inFileNum = -1;
+    int outFileNum = -1; // used to revert freopen on stdout
+    int inFileNum = -1;// used to revert freopen on stdin
+    int pipesEnabled = 0;
     
     // infinite loop waiting for and handling user *commandPtr input
     while(1) {
@@ -29,6 +34,7 @@ void initShell() {
         // reset command and background flag
         strcpy(*commandPtr, ""); 
         background = 0;
+        pipesEnabled = 0;
         outFileNum = dup(fileno(stdout));
         inFileNum = dup(fileno(stdin));
 
@@ -52,7 +58,7 @@ void initShell() {
         temp = strtok(buffer, " ");
         strcpy(*commandPtr, "");
         
-        // loop through all tokens and look for > or < tokens
+        // loop through all tokens and look for >, <,  & or | tokens
         do {
             if (strcmp(temp, ">") == 0) {
                 // next token is file name
@@ -69,19 +75,29 @@ void initShell() {
                 background = 1;
                 break;
             }
-            else {
-                strcat(*commandPtr, temp);
-                strcat(*commandPtr, " ");
+
+            if (strcmp(temp, "|") == 0) {
+                // turn pipes flag on
+                pipesEnabled = 1; 
             }
+
+            strcat(*commandPtr, temp);
+            strcat(*commandPtr, " ");
         } while (temp = strtok(NULL, " "));
         
         // remove preceding and trailing spaces then execute command
         trimString(commandPtr);
-        forkProcess(*commandPtr, 1, background, processes, &length); 
+
+        if (pipesEnabled == 1) {
+            pipeCommand(*commandPtr, processes, &length);
+        }
+        else {
+            forkProcess(*commandPtr, 1, background, processes, &length); 
+        }
 
         // reset both standard streams
-        dup2(outFileNum, fileno(stdout));    
-        dup2(inFileNum, fileno(stdin));
+        dup2(outFileNum, STDOUT_FILENO);
+        dup2(inFileNum, STDIN_FILENO);
     }
 }
 
@@ -134,7 +150,7 @@ void forkProcess(char *command, int currentDir, int background, pid_t **processe
 
     if (newProcess < 0) {
         perror("fork");
-        return;
+        exit (EXIT_FAILURE);
     }
     
     // parent process
@@ -157,13 +173,13 @@ void forkProcess(char *command, int currentDir, int background, pid_t **processe
     }
     else {
         // execute program
-        status = execvp(parameters[0], parameters);
+        execv(parameters[0], parameters);
 
         if(status == -1) {
-            perror("execvp");
+            perror("execv");
+            exit(EXIT_FAILURE);
         }
         
-        freeList(parameters, paramNum);
         // signal that process ended
         kill(getppid(), SIGCHLD);
     }
@@ -210,6 +226,15 @@ char **getParams(char *command, int *length) {
             paramLen = 0;
             spacePreceded = 0;
         }
+        
+        // check if command doesnt start with ./ and prepend command with mypath
+        if (i == 0 && (command[0] != '.' && command[1] && command[1] && command[1] != '/')) {
+            params[*length] = realloc(params[*length], sizeof(char) * (strlen(getenv("myPath")) + strlen(command) + 2));
+            strcpy(params[*length], getenv("myPath"));
+            strcat(params[*length], "/");
+            paramLen = strlen(params[*length]);
+        }
+
         params[*length][paramLen++] = command[i];
         params[*length][paramLen] = '\0';
 
@@ -228,6 +253,141 @@ char **getParams(char *command, int *length) {
     
     return params;
 }
+
+void pipeCommand(char *command, pid_t **processes, int *length) {
+    // check for null command 
+    if (command == NULL) {
+        return;
+    }
+    
+    // split command into 2 commands (before and after |)
+    char *beforeCommand;
+    char *afterCommand;
+    getCommands(command, 1, &beforeCommand);
+    getCommands(command, 0, &afterCommand);
+    
+    // remove trailing spaces
+    trimString(&beforeCommand);
+    trimString(&afterCommand);
+
+    // get parameters of both commands
+    int firstNum = 0;
+    char **firstParams = getParams(beforeCommand, &firstNum);
+    int secondNum = 0;
+    char **secondParams = getParams(afterCommand, &secondNum);
+    
+    int outFileNum = dup(fileno(stdout));
+    int inFileNum = dup(fileno(stdin));
+
+    // initialize communication pipe
+    int commPipe[2];
+    pipe(commPipe);
+
+    pid_t newProcess = fork(); // returns child pid
+    int status;
+
+    if (newProcess < 0) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+    
+    // child process should execute first command and send output to its child
+    if (newProcess == 0) {
+        // fork child
+        pid_t secondProcess = fork();
+        
+        if (secondProcess < 0) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+        
+        // parent process
+        if (secondProcess > 0) {
+            // copy commPipe[0] of this process into stdin index of file
+            // descriptor table 
+            close(commPipe[1]);	
+            dup2(commPipe[0], STDIN_FILENO);
+            close(commPipe[0]);
+            
+            // execute second command takin input from the child process
+            status = execv(secondParams[0], secondParams);
+
+            if (status == -1) {
+                perror("execv");
+            }
+        }
+        else {
+            // copy commPipe[1] of the grandchild process into stdout index of 
+            // file descriptor table and close unused ends of the pipe. 
+            // Both after copying the commPipe[1] 
+            close(commPipe[0]);
+            dup2(commPipe[1], STDOUT_FILENO);
+            close(commPipe[1]);
+            
+            // execute the first command giving output to parent process
+            status = execv(firstParams[0], firstParams);
+
+            if (status == -1) {
+                perror("execv");
+            }
+    
+            exit(status);
+        }
+    }
+    else if (newProcess > 0) {  // grandparent process
+        // close both ends of the pipe for this process since 
+        // since communication isnt needed for the grandparent
+        close(commPipe[1]);	
+        close(commPipe[0]);
+
+        // waits for both processes to execute and return
+        waitpid(newProcess, &status, 0);
+        if (status == -1) {
+            perror("execv");
+        }
+        
+        // free command and parameter strings
+        free(beforeCommand);
+        free(afterCommand);
+        freeList(firstParams, firstNum);
+        freeList(secondParams, secondNum);
+    }
+}
+
+void getCommands(char *command, int before, char **target) {
+    if (command == NULL) {
+        return;
+    }
+    
+    char *buffer = malloc(sizeof(char) * (strlen(command) + 1));
+    char *temp;
+    
+    *target = malloc(sizeof(char));
+    strcpy(*target, "");
+    strcpy(buffer, command);
+    temp = strtok(buffer, " ");
+    
+    do {
+        // check if call requires second command when
+        // we hit a "|" token, resets target when entered
+        if (strcmp(temp, "|") == 0 && before == 0) {
+            strcpy(*target, "");
+            continue;
+        }
+        else if (strcmp(temp, "|") == 0) { 
+            // means we needed first command and we already got it
+            free(buffer);   
+            return;
+        }
+        
+        // concatenate each word of the command to target
+        *target = realloc(*target, sizeof(char) * (strlen(*target) + strlen(temp) + 2));
+        strcat(*target, temp);
+        strcat(*target, " ");
+    } while (temp = strtok(NULL, " "));
+
+    free(buffer);
+} 
 
 void freeList(char **list, int length) {
     if (list == NULL) {
