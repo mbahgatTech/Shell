@@ -54,7 +54,7 @@ void initShell() {
         temp = strtok(buffer, " ");
         strcpy(*commandPtr, "");
         
-        // loop through all tokens and look for >, < or & tokens
+        // loop through all tokens and look for >, <,  & or | tokens
         do {
             if (strcmp(temp, ">") == 0) {
                 // next token is file name
@@ -71,8 +71,9 @@ void initShell() {
                 background = 1;
                 break;
             }
-            else if (strcmp(temp, "|") == 0) {
-                // tur pipes flag on
+
+            if (strcmp(temp, "|") == 0) {
+                // turn pipes flag on
                 pipesEnabled = 1; 
             }
 
@@ -145,7 +146,7 @@ void forkProcess(char *command, int currentDir, int background, pid_t **processe
 
     if (newProcess < 0) {
         perror("fork");
-        return;
+        exit (EXIT_FAILURE);
     }
     
     // parent process
@@ -172,9 +173,9 @@ void forkProcess(char *command, int currentDir, int background, pid_t **processe
 
         if(status == -1) {
             perror("execvp");
+            exit(EXIT_FAILURE);
         }
         
-        freeList(parameters, paramNum);
         // signal that process ended
         kill(getppid(), SIGCHLD);
     }
@@ -274,43 +275,69 @@ void pipeCommand(char *command, pid_t **processes, int *length) {
 
     if (newProcess < 0) {
         perror("fork");
-        return;
+        exit(EXIT_FAILURE);
     }
     
-    // child process should execute first command and send it to parent
-    if (newProcess > 0) { 
-        close(commPipe[1]);
-        dup2(commPipe[0], STDIN_FILENO);
-        close(commPipe[0]);
-
-        char inputString[500];
-        status = execvp(secondParams[0], secondParams);
-        while(read(STDIN_FILENO, inputString, sizeof(char) * 500) > 0) {
-            dup2(outFileNum, STDOUT_FILENO);
+    // child process should execute first command and send output to its child
+    if (newProcess == 0) {
+        // fork child
+        pid_t secondProcess = fork();
+        
+        if (secondProcess < 0) {
+            perror("fork");
+            exit(EXIT_FAILURE);
         }
         
-        free(beforeCommand);
-        free(afterCommand);
+        // parent process
+        if (secondProcess > 0) {
+            // copy commPipe[0] of this process into stdin index of file
+            // descriptor table 
+            close(commPipe[1]);	
+            dup2(commPipe[0], STDIN_FILENO);
+            close(commPipe[0]);
+            
+            // execute second command takin input from the child process
+            status = execvp(secondParams[0], secondParams);
 
-        freeList(firstParams, firstNum);
-        freeList(secondParams, secondNum);
+            if (status == -1) {
+                perror("execvp");
+            }
+        }
+        else {
+            // copy commPipe[1] of the grandchild process into stdout index of 
+            // file descriptor table and close unused ends of the pipe. 
+            // Both after copying the commPipe[1] 
+            close(commPipe[0]);
+            dup2(commPipe[1], STDOUT_FILENO);
+            close(commPipe[1]);
+            
+            // execute the first command giving output to parent process
+            status = execvp(firstParams[0], firstParams);
+
+            if (status == -1) {
+                perror("execvp");
+            }
+    
+            exit(status);
+        }
     }
-    else {
+    else if (newProcess > 0) {  // grandparent process
+        // close both ends of the pipe for this process since 
+        // since communication isnt needed for the grandparent
+        close(commPipe[1]);	
         close(commPipe[0]);
-        dup2(commPipe[1], STDOUT_FILENO);
-        close(commPipe[1]);
-        status = execvp(firstParams[0], firstParams);
 
+        // waits for both processes to execute and return
+        waitpid(newProcess, &status, 0);
         if (status == -1) {
             perror("execvp");
         }
         
+        // free command and parameter strings
         free(beforeCommand);
         free(afterCommand);
         freeList(firstParams, firstNum);
         freeList(secondParams, secondNum);
-        // signal that process ended
-        kill(getppid(), SIGCHLD);
     }
 }
 
@@ -332,10 +359,11 @@ void getCommands(char *command, int before, char **target) {
         // we hit a "|" token, resets target when entered
         if (strcmp(temp, "|") == 0 && before == 0) {
             strcpy(*target, "");
+            continue;
         }
         else if (strcmp(temp, "|") == 0) { 
             // means we needed first command and we already got it
-            free(buffer);
+            free(buffer);   
             return;
         }
         
