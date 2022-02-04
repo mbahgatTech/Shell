@@ -6,9 +6,13 @@ int main() {
 }
 
 void initShell() {
+    char *profiles = malloc(sizeof(char) * (strlen(getenv("HOME")) + strlen("/.CIS3110_history") + 1));
+    strcpy(profiles, getenv("HOME"));
+    strcat(profiles, "/.CIS3110_history");
+
     // set environment variables on startup
     setenv("myPath", "/bin", 1);
-    setenv("myHISTFILE", "~/.CIS3110_history", 1);
+    setenv("myHISTFILE", profiles, 1);
     setenv("myHOME", getenv("HOME"), 1);
 
     char **commandPtr = malloc(sizeof(char *));
@@ -22,7 +26,11 @@ void initShell() {
     
     // open profile file and execute its commands
     FILE *openFile = NULL;
-    openFile = fopen("~/.CIS3110_profile", "r");
+    strcpy(profiles, getenv("HOME"));
+    strcat(profiles, "/.CIS3110_profile");
+    openFile = fopen(profiles, "r");
+    free(profiles);
+    
     while (openFile && !feof(openFile)) {
         // take each command from a line in the file untill end of file
         fgets(*commandPtr, 100, openFile);
@@ -44,12 +52,27 @@ void initShell() {
     
     // infinite loop waiting for and handling user *commandPtr input
     while(1) {
-        printf(">");
+        printf("%s> ", getcwd(NULL, 100));
         strcpy(*commandPtr, ""); 
 
         // take command input
         fgets(*commandPtr, 100, stdin);
         trimString(commandPtr);
+        
+        // write command to history file
+        openFile = fopen(getenv("myHISTFILE"), "a");
+        if (openFile) {
+            fprintf(openFile, "%s\n", *commandPtr);
+            fclose(openFile);
+        }
+        else {
+            // open for writing if append failed, meaning file doesnt exist
+            openFile = fopen(getenv("myHISTFILE"), "w");
+            if (openFile) {
+                fprintf(openFile, "%s\n", *commandPtr);
+                fclose(openFile);
+            }
+        }
         
         // check the command is exit and kill shell if entered
         if (strcmp(*commandPtr, "exit") == 0) {
@@ -99,7 +122,7 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     if (!commandPtr || !*commandPtr || strlen(*commandPtr) == 0) {
         return;
     }
-
+    
     char *temp, *buffer;
     int background = 0, pipesEnabled = 0;
     int outFileNum = dup(STDOUT_FILENO);
@@ -113,9 +136,42 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     temp = strtok(buffer, " ");
     strcpy(*commandPtr, "");
     
-    // check the type of command and execute accordingly //
-    // loop through all tokens and look for >, <,  & or | tokens
+    // check the type of command and execute accordingly 
     do {
+        // enters on cd command and takes next argument as directory
+        if (strcmp(temp, "cd") == 0 && (temp = strtok(NULL, " ")) != NULL) {
+            if (chdir(temp) != 0) {
+                perror("cd");
+            }
+            return;
+        } // history branch opens myHISTFILE and outputs its contents
+        else if (strcmp(temp, "history") == 0) {
+            openFile = fopen(getenv("myHISTFILE"), "r");
+            if (!openFile) {
+                return;
+            }
+            
+            // print every line in the file in the requested format
+            int counter = 1;
+            while(!feof(openFile)) {
+                buffer = realloc(buffer, sizeof(char) * 101);
+                strcpy(buffer, "");
+                fgets(buffer, 100, openFile);
+                
+                // remove new line at the end of buffer before printing
+                if (buffer[strlen(buffer) - 1] == '\n') {
+                    buffer[strlen(buffer) - 1] = '\0';
+                }
+                
+                if (strlen(buffer) > 0) {
+                    printf(" %d  %s\n", counter++, buffer);
+                }
+            }
+            return;
+        }
+
+
+        // loop through all tokens and look for >, <,  & or | tokens
         if (strcmp(temp, ">") == 0) {
             // next token is file name
             openFile = freopen(strtok(NULL, " "), "w", stdout);
