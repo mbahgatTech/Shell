@@ -56,6 +56,7 @@ void initShell() {
         profiles = getcwd(NULL, 100);
         printf("%s> ", profiles);
         free(profiles);
+        *commandPtr = realloc(*commandPtr, sizeof(char) * 100);
         strcpy(*commandPtr, ""); 
 
         // take command input
@@ -130,7 +131,7 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     int background = 0, pipesEnabled = 0;
     int outFileNum = dup(STDOUT_FILENO);
     int inFileNum = dup(STDIN_FILENO);
-    FILE *openFile;
+    FILE *openFile, *openReadFile;
 
     
     // copy command into buffer and tokenize it with spaces
@@ -147,6 +148,7 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
             if (chdir(temp) != 0) {
                 perror("cd");
             }
+            free(buffer);
             return;
         }
         else if(i == 0 && strcmp(temp, "export") == 0) {
@@ -158,6 +160,7 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
                 char *temp2 = strtok(temp, "=");
                 setenv(temp2, strtok(NULL, "="), 1);
             }
+            free(buffer);
             return;
         } 
         // history branch opens myHISTFILE and outputs its contents
@@ -203,6 +206,11 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
             free(buffer);
             return;
         }
+        
+        if (i == 0 && temp[0] && temp[0] != '.') {
+            pathPrefix(commandPtr, temp, getenv("myPath"));
+        }
+
 
         // loop through all tokens and look for >, <,  & or | tokens
         if (strcmp(temp, ">") == 0) {
@@ -210,21 +218,22 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
             openFile = freopen(strtok(NULL, " "), "w", stdout);
             break;
         }
-        else if (strcmp(temp, "<") == 0) {
+        if (strcmp(temp, "<") == 0) {
             // next token is input file name
-            openFile = freopen(strtok(NULL, " "), "r", stdin);
+            openReadFile = freopen(strtok(NULL, " "), "r", stdin);
             break;
         }
-        else if (strcmp(temp, "&") == 0) {
+        if (strcmp(temp, "&") == 0) {
             // assumed to be last argument (turn on background processes)
             background = 1;
             break;
         }
-
         if (strcmp(temp, "|") == 0) {
             // turn pipes flag on
             pipesEnabled = 1; 
+            i = -1;
         }
+
 
         strcat(*commandPtr, temp);
         strcat(*commandPtr, " ");
@@ -248,6 +257,62 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     free(buffer);
 }
 
+void pathPrefix(char **commandPtr, char *temp, char *pathString) {
+    if (!temp || !pathString || !commandPtr) {
+        return;
+    }
+
+    // tokenize myPath directories
+    char *currPath = malloc(sizeof(char) * (strlen(pathString) + 1));
+    strcpy(currPath, "");
+    
+    // copy first path directory
+    int index = 0;
+    for (int i = 0; i < strlen(pathString); i++) {
+        if (pathString[i] == ':' || isspace(pathString[i])) {
+            break;
+        } 
+        currPath[i] = pathString[i];
+        currPath[i + 1] = '\0';
+    }
+
+    // prepend current myPath directory to fileName 
+    FILE *tempFile;
+    char * fileName = malloc(sizeof(char) * (strlen(currPath) + strlen(temp) + 2));
+    strcpy(fileName, currPath);
+    strcat(fileName, "/");
+    strcat(fileName, temp);
+
+    if ((tempFile = fopen(currPath, "r")) != NULL) {
+        // copy the right directory name to the command
+        *commandPtr = realloc(*commandPtr, sizeof(char) * (100 + strlen(currPath) + 2));
+        strcat(*commandPtr, currPath);
+        strcat(*commandPtr, "/");
+
+        free(fileName);
+        fclose(tempFile);
+        free(currPath);
+        return;
+    }
+    
+    // copy next path directoy and make a recursive call on it
+    strcpy(currPath, "");
+    for (int i = strlen(currPath) + 1; i < strlen(pathString); i++) {
+        if (pathString[i] == ':' || isspace(pathString[i])) {
+            break;
+        } 
+        currPath[i] = pathString[i];
+        currPath[i + 1] = '\0';
+    }
+    // make sure there are remaining path direcotories
+    if (strlen(currPath) > 0) {
+        pathPrefix(commandPtr, temp, currPath);
+    }
+    
+    free(currPath);
+    free(fileName);
+}
+
 void forkProcess(char *command, int background, pid_t **processes, int *length) {
     // check for null command 
     if (command == NULL) {
@@ -257,6 +322,9 @@ void forkProcess(char *command, int background, pid_t **processes, int *length) 
     // get command name without args
     int paramNum = 0;
     char **parameters = getParams(command, &paramNum);
+    if (!parameters || !parameters[0]) {
+        return;
+    }
 
     pid_t newProcess = fork(); // returns child pid
     int status;
@@ -286,7 +354,7 @@ void forkProcess(char *command, int background, pid_t **processes, int *length) 
     }
     else {
         // execute program
-        execv(parameters[0], parameters);
+        status = execv(parameters[0], parameters);
 
         if(status == -1) {
             perror("execv");
@@ -362,14 +430,6 @@ char **getParams(char *command, int *length) {
                 continue;
             }
         }
-        
-        // check if command doesnt start with ./ and prepend command with mypath
-        if (i == 0 && (command[0] != '.' && command[1] && command[1] && command[1] != '/')) {
-            params[*length] = realloc(params[*length], sizeof(char) * (strlen(getenv("myPath")) + strlen(command) + 2));
-            strcpy(params[*length], getenv("myPath"));
-            strcat(params[*length], "/");
-            paramLen = strlen(params[*length]);
-        }
 
         params[*length][paramLen++] = command[i];
         params[*length][paramLen] = '\0';
@@ -382,9 +442,10 @@ char **getParams(char *command, int *length) {
     }
 
     // remove & from end of the command if present
-    if (strcmp(params[(*length) - 1], "&") == 0) {
+    if ((*length) != 0 && strcmp(params[(*length) - 1], "&") == 0) {
         // ommit the argument and decrement length
-        free(params[--(*length)]);
+        strcpy(params[--(*length)], "");
+        free(params[*length]);
     }
     
     return params;

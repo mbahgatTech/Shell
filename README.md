@@ -28,4 +28,4 @@ myShell uses its adds its own environment variables:
 - You need to have the GCC compiler and make utility installed on your system.
 
 ## Limitations
-- Currently can't execute commands with multiple myPath directories.
+

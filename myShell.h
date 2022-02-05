@@ -17,6 +17,10 @@ void trimString(char **ptr);
 // Function parses the given command and executes it
 void parseCommand(char **commandPtr, pid_t **processes, int *length);
 
+// Function prepends the path of the directory that contatins the file for the
+// specified command.
+void pathPrefix(char **commandPtr, char *temp, char *pathString);
+
 // Function starts a new specified process
 void forkProcess(char *command, int background, pid_t **processes, int *length);
 
