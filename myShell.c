@@ -31,6 +31,7 @@ void initShell() {
     openFile = fopen(profiles, "r");
     free(profiles);
     
+
     while (openFile && !feof(openFile)) {
         // take each command from a line in the file untill end of file
         fgets(*commandPtr, 100, openFile);
@@ -52,7 +53,9 @@ void initShell() {
     
     // infinite loop waiting for and handling user *commandPtr input
     while(1) {
-        printf("%s> ", getcwd(NULL, 100));
+        profiles = getcwd(NULL, 100);
+        printf("%s> ", profiles);
+        free(profiles);
         strcpy(*commandPtr, ""); 
 
         // take command input
@@ -136,40 +139,70 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     temp = strtok(buffer, " ");
     strcpy(*commandPtr, "");
     
+    int i = 0;
     // check the type of command and execute accordingly 
     do {
         // enters on cd command and takes next argument as directory
-        if (strcmp(temp, "cd") == 0 && (temp = strtok(NULL, " ")) != NULL) {
+        if (i == 0 && strcmp(temp, "cd") == 0 && (temp = strtok(NULL, " ")) != NULL) {
             if (chdir(temp) != 0) {
                 perror("cd");
             }
             return;
-        } // history branch opens myHISTFILE and outputs its contents
-        else if (strcmp(temp, "history") == 0) {
+        }
+        else if(i == 0 && strcmp(temp, "export") == 0) {
+            /* 
+            second parameter should be in the following format:
+            envar=val1:val2:val3
+            */ 
+            if((temp = strtok(NULL, " ")) != NULL) {
+                char *temp2 = strtok(temp, "=");
+                setenv(temp2, strtok(NULL, "="), 1);
+            }
+            return;
+        } 
+        // history branch opens myHISTFILE and outputs its contents
+        else if (i == 0 && strcmp(temp, "history") == 0) {
             openFile = fopen(getenv("myHISTFILE"), "r");
             if (!openFile) {
+                free(buffer);
                 return;
             }
             
             // print every line in the file in the requested format
             int counter = 1;
             while(!feof(openFile)) {
-                buffer = realloc(buffer, sizeof(char) * 101);
-                strcpy(buffer, "");
-                fgets(buffer, 100, openFile);
-                
-                // remove new line at the end of buffer before printing
-                if (buffer[strlen(buffer) - 1] == '\n') {
-                    buffer[strlen(buffer) - 1] = '\0';
+                // check for parameters
+                if ((temp = strtok(NULL, " ")) != NULL) {
+                    // clear file by opening it for writing
+                    if (strcmp(temp, "-c") == 0) {
+                        fclose(openFile);
+                        openFile = fopen(getenv("myHISTFILE"), "w");
+
+                        fclose(openFile);
+                        openFile = fopen(getenv("myHISTFILE"), "r");
+                        continue;
+                    }
                 }
                 
-                if (strlen(buffer) > 0) {
-                    printf(" %d  %s\n", counter++, buffer);
+                // reuse temp as a buffer for history file commands
+                temp = malloc(sizeof(char) * 100);
+                strcpy(temp, "");
+                fgets(temp, 100, openFile);
+                
+                if (strlen(temp) > 0) {
+                    // remove new line at the end of temp before printing
+                    if (temp[strlen(temp) - 1] == '\n') {
+                        temp[strlen(temp) - 1] = '\0';
+                    }
+
+                    printf(" %d  %s\n", counter++, temp);
                 }
+                free(temp);
             }
+            fclose(openFile);
+            free(buffer);
             return;
         }
-
 
         // loop through all tokens and look for >, <,  & or | tokens
         if (strcmp(temp, ">") == 0) {
@@ -195,6 +228,7 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
 
         strcat(*commandPtr, temp);
         strcat(*commandPtr, " ");
+        i++;
     } while (temp = strtok(NULL, " "));
     
     // remove preceding and trailing spaces then execute command
@@ -304,6 +338,29 @@ char **getParams(char *command, int *length) {
             strcpy(params[*length], "");
             paramLen = 0;
             spacePreceded = 0;
+            
+            // environment variable replacement
+            if (command[i] == '$') {
+                // create buffer to get env variable name
+                char *envBuffer = malloc(sizeof(char) * (strlen(command) + 1));
+                strcpy(envBuffer, "");
+
+                // loop till space or end of command and copy chars to buffer
+                int j = i + 1;
+                while (!isspace(command[j]) && j != (strlen(command))) {
+                    envBuffer[paramLen++] = command[j++];
+                    envBuffer[paramLen] = '\0'; 
+                }
+                
+                params[*length] = realloc(params[*length], sizeof(char) * (strlen(getenv(envBuffer)) + 1));
+                params[*length] = strcpy(params[*length], getenv(envBuffer));
+                free(envBuffer);
+                
+                // skip the buffer characters that have already been replace in params
+                (*length)++;
+                i = j;
+                continue;
+            }
         }
         
         // check if command doesnt start with ./ and prepend command with mypath
