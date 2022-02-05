@@ -17,6 +17,9 @@ void trimString(char **ptr);
 // Function parses the given command and executes it
 void parseCommand(char **commandPtr, pid_t **processes, int *length);
 
+// Function performs export command.
+void exportVar(char *command);
+
 // Function prepends the path of the directory that contatins the file for the
 // specified command.
 void pathPrefix(char **commandPtr, char *temp, char *pathString);

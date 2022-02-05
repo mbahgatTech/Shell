@@ -152,14 +152,13 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
             return;
         }
         else if(i == 0 && strcmp(temp, "export") == 0) {
-            /* 
-            second parameter should be in the following format:
-            envar=val1:val2:val3
-            */ 
-            if((temp = strtok(NULL, " ")) != NULL) {
-                char *temp2 = strtok(temp, "=");
-                setenv(temp2, strtok(NULL, "="), 1);
+            exportVar(strtok(NULL, " "));
+            
+            // get rid of all tokens
+            while((temp = strtok(NULL, " ")) != NULL) {
+                continue;
             }
+
             free(buffer);
             return;
         } 
@@ -216,19 +215,19 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
         if (strcmp(temp, ">") == 0) {
             // next token is file name
             openFile = freopen(strtok(NULL, " "), "w", stdout);
-            break;
+            continue;
         }
-        if (strcmp(temp, "<") == 0) {
+        else if (strcmp(temp, "<") == 0) {
             // next token is input file name
             openReadFile = freopen(strtok(NULL, " "), "r", stdin);
-            break;
+            continue;
         }
-        if (strcmp(temp, "&") == 0) {
+        else if (strcmp(temp, "&") == 0) {
             // assumed to be last argument (turn on background processes)
             background = 1;
             break;
         }
-        if (strcmp(temp, "|") == 0) {
+        else if (strcmp(temp, "|") == 0) {
             // turn pipes flag on
             pipesEnabled = 1; 
             i = -1;
@@ -257,6 +256,60 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     free(buffer);
 }
 
+void exportVar(char *command) {
+    if (!command) {
+        return;
+    }
+    
+    char *varName = malloc(sizeof(char) * (strlen(command) + 1));
+    int i = 0;
+    for (i = 0; i < strlen(command); i++) {
+        // end of variable name when = sign is encountered
+        if (command[i] == '=') {
+            i++;
+            break;
+        }
+        
+        varName[i] = command[i];
+        varName[i + 1] = '\0';
+    }
+    
+    char *varValue = malloc(sizeof(char) * (strlen(command) + 1));
+    int index = 0;
+    for (i = i; i < strlen(command); i++) {
+        // in case of any environment variables in the value are present
+        // replace them with the actual value
+        if (command[i] == '$') {
+            // create buffer to get env variable name
+            char *envBuffer = malloc(sizeof(char) * (strlen(command) + 1));
+            strcpy(envBuffer, "");
+
+            // loop till space or end of command and copy chars to buffer
+            int j = i + 1;
+            while (j < strlen(command) && (!isspace(command[j]) || command[j] != '/' || command[j] != ':')) { 
+                envBuffer[j] = command[j++];
+                envBuffer[j] = '\0'; 
+            }
+            
+            char *temp = getenv(envBuffer);
+            varValue = realloc(command, sizeof(char) * (strlen(command) + strlen(temp) + 1));
+            strcat(varValue, temp);
+            index = strlen(varValue);          
+
+            free(envBuffer);
+            i = j;
+        }
+
+        varValue[index++] = command[i]; 
+        varValue[index] = '\0';
+    }
+    
+    // set environment variable to its specified value
+    setenv(varName, varValue, 1);
+    free(varName);
+    free(varValue);
+}
+
 void pathPrefix(char **commandPtr, char *temp, char *pathString) {
     if (!temp || !pathString || !commandPtr) {
         return;
@@ -283,7 +336,7 @@ void pathPrefix(char **commandPtr, char *temp, char *pathString) {
     strcat(fileName, "/");
     strcat(fileName, temp);
 
-    if ((tempFile = fopen(currPath, "r")) != NULL) {
+    if ((tempFile = fopen(fileName, "r")) != NULL) {
         // copy the right directory name to the command
         *commandPtr = realloc(*commandPtr, sizeof(char) * (100 + strlen(currPath) + 2));
         strcat(*commandPtr, currPath);
@@ -295,15 +348,16 @@ void pathPrefix(char **commandPtr, char *temp, char *pathString) {
         return;
     }
     
-    // copy next path directoy and make a recursive call on it
+    // copy next path directories and make a recursive call on it
+    int lastPathLen = strlen(currPath);
     strcpy(currPath, "");
-    for (int i = strlen(currPath) + 1; i < strlen(pathString); i++) {
-        if (pathString[i] == ':' || isspace(pathString[i])) {
-            break;
-        } 
-        currPath[i] = pathString[i];
-        currPath[i + 1] = '\0';
+    
+    index = 0;
+    for (int i = lastPathLen + 1; i < strlen(pathString); i++) {
+        currPath[index++] = pathString[i];
+        currPath[index] = '\0';
     }
+
     // make sure there are remaining path direcotories
     if (strlen(currPath) > 0) {
         pathPrefix(commandPtr, temp, currPath);
@@ -383,14 +437,6 @@ char **getParams(char *command, int *length) {
         if (isspace(command[i])) {
             // only edit params if it not an extra space
             if (spacePreceded != 1 && params[*length] != NULL) {
-                // > < arguments arent apart of the command and
-                // will be handled by initShell function 
-                if (strcmp(params[*length], ">") == 0 || 
-                    strcmp(params[*length], "<") == 0) {
-                    // ommit the argument and break out of loop
-                    free(params[*length]);
-                    break;
-                }
                 params[*length] = realloc(params[*length], sizeof(char) * (strlen(params[*length]) + 1));
                 (*length)++; // num of params incremented after last one's assigned
             }
@@ -415,17 +461,20 @@ char **getParams(char *command, int *length) {
 
                 // loop till space or end of command and copy chars to buffer
                 int j = i + 1;
-                while (!isspace(command[j]) && j != (strlen(command))) {
+                while (j < strlen(command) && (!isspace(command[j]) || command[j] != '/' || command[j] != ':')) { 
                     envBuffer[paramLen++] = command[j++];
                     envBuffer[paramLen] = '\0'; 
                 }
                 
-                params[*length] = realloc(params[*length], sizeof(char) * (strlen(getenv(envBuffer)) + 1));
-                params[*length] = strcpy(params[*length], getenv(envBuffer));
+                char *tempEnv = getenv(envBuffer);
+                params[*length] = realloc(params[*length], sizeof(char) * (strlen(tempEnv) + 1));
+                params[*length] = strcpy(params[*length], tempEnv);
                 free(envBuffer);
                 
                 // skip the buffer characters that have already been replace in params
-                (*length)++;
+                if (j == strlen(command)) {
+                    (*length)++;
+                }
                 i = j;
                 continue;
             }
@@ -442,11 +491,12 @@ char **getParams(char *command, int *length) {
     }
 
     // remove & from end of the command if present
-    if ((*length) != 0 && strcmp(params[(*length) - 1], "&") == 0) {
+    if ((*length) != 0 && (strcmp(params[(*length) - 1], "&") == 0)) {
         // ommit the argument and decrement length
         strcpy(params[--(*length)], "");
         free(params[*length]);
     }
+    params[*length] = NULL;
     
     return params;
 }
