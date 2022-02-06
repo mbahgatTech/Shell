@@ -36,6 +36,23 @@ void initShell() {
         // take each command from a line in the file untill end of file
         fgets(*commandPtr, 100, openFile);
         trimString(commandPtr);
+
+        // write command to history file
+        if (strlen(*commandPtr) > 0) {
+            FILE *histFileWrite = fopen(getenv("myHISTFILE"), "a");
+            if (histFileWrite) {
+                fprintf(histFileWrite, "%s\n", *commandPtr);
+                fclose(histFileWrite);
+            }
+            else {
+                // open for writing if append failed, meaning file doesnt exist
+                histFileWrite = fopen(getenv("myHISTFILE"), "w");
+                if (histFileWrite) {
+                    fprintf(histFileWrite, "%s\n", *commandPtr);
+                    fclose(histFileWrite);
+                }
+            }
+        }
         
         // profile shoudlnt have an exit command if it wants to allow
         // user given commands
@@ -172,22 +189,34 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
                 return;
             }
             
+            // check for parameters
+            if ((temp = strtok(NULL, " ")) != NULL) {
+                // clear file by opening it for writing
+                if (strcmp(temp, "-c") == 0) {
+                    fclose(openFile);
+                    openFile = fopen(getenv("myHISTFILE"), "w");
+
+                    fclose(openFile);
+                    openFile = fopen(getenv("myHISTFILE"), "r");
+                }
+                else {
+                    int digits = 1;
+                    // check if all chars are digits in the token
+                    for (int idx = 0; idx < strlen(temp); idx++) {
+                        if (!isdigit(temp[idx])) {
+                            digits = 0;
+                        }
+                    }
+                    
+                    if (digits == 1) {
+                        outputLast(openFile, atoi(temp));
+                    }
+                }
+            }
+
             // print every line in the file in the requested format
             int counter = 1;
             while(!feof(openFile)) {
-                // check for parameters
-                if ((temp = strtok(NULL, " ")) != NULL) {
-                    // clear file by opening it for writing
-                    if (strcmp(temp, "-c") == 0) {
-                        fclose(openFile);
-                        openFile = fopen(getenv("myHISTFILE"), "w");
-
-                        fclose(openFile);
-                        openFile = fopen(getenv("myHISTFILE"), "r");
-                        continue;
-                    }
-                }
-                
                 // reuse temp as a buffer for history file commands
                 temp = malloc(sizeof(char) * 100);
                 strcpy(temp, "");
@@ -255,6 +284,42 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     // reset both standard streams
     dup2(outFileNum, STDOUT_FILENO);
     dup2(inFileNum, STDIN_FILENO);
+}
+
+void outputLast(FILE *file, int n) {
+    if (!file) {
+        return;
+    }
+    
+    char *buffer = malloc(sizeof(char) * 100);
+    int count = 0;
+    
+    // count the number of lines in the file
+    while(!feof(file)) {
+        fgets(buffer, 100, file);
+        count++;
+    }
+    count--; // last attempt is on an empty line shouldnt count.
+
+    int i = count - n; // include the last command 
+    if (i < 0) {
+        i = 0;
+    }
+    
+    // start from beginning of file and skip first i lines
+    fseek(file, 0, SEEK_SET);
+    for(int offset = 0; offset < i; offset++) {
+        fgets(buffer, 100, file);
+    }
+
+    // print last n commands
+    for(i; i < count && !feof(file); i++) {
+        strcpy(buffer, "");
+        fgets(buffer, 100, file);
+        printf(" %d  %s", i + 1, buffer);
+    }
+
+    free(buffer);
 }
 
 void exportVar(char *command) {

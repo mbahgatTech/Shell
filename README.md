@@ -17,10 +17,13 @@ myShell uses its adds its own environment variables:
 - myPath: Default = /bin. 
 - myHISTFILE: Default = ~/.CIS3110_history. 
   - Display contents using "history" command.
+  - Display last n commands using "history <n>".
+  - Clear history file using "history -c".
 - myHOME: Home directory variable.
 
 ## Download & Run Information
 - Clone the repository into your local POSIX machine.
+- Launch your terminal and make sure your current working directory is where you downloaded this folder. Use cd <dirpath>.
 - Run the "make" command in your terminal to generate the executable "myShell".
 - Run the progam using "./myShell" command.
 
@@ -28,4 +31,5 @@ myShell uses its adds its own environment variables:
 - You need to have the GCC compiler and make utility installed on your system.
 
 ## Limitations
+- history commands can't be paired with pipes or input/output stream redirections.
 

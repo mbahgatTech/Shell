@@ -17,6 +17,9 @@ void trimString(char **ptr);
 // Function parses the given command and executes it
 void parseCommand(char **commandPtr, pid_t **processes, int *length);
 
+// Function outputs the last n commands in history file
+void outputLast(FILE *file, int n);
+
 // Function performs export command.
 void exportVar(char *command);
 
