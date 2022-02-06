@@ -25,13 +25,13 @@ void exportVar(char *command);
 void pathPrefix(char **commandPtr, char *temp, char *pathString);
 
 // Function starts a new specified process
-void forkProcess(char *command, int background, pid_t **processes, int *length);
+void forkProcess(char **command, int background, pid_t **processes, int *length);
 
 // Function returns an array of strings representing parameters in the command string
 char **getParams(char *command, int *length);
 
 // Function executes pipe commands
-void pipeCommand(char *command); 
+void pipeCommand(char **command, pid_t **processes, int length);
 
 // Function splits the command into 2 commands before and after the | symbol and
 // returns the requested command into target indicated by parameter before

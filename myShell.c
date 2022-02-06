@@ -64,17 +64,19 @@ void initShell() {
         trimString(commandPtr);
         
         // write command to history file
-        openFile = fopen(getenv("myHISTFILE"), "a");
-        if (openFile) {
-            fprintf(openFile, "%s\n", *commandPtr);
-            fclose(openFile);
-        }
-        else {
-            // open for writing if append failed, meaning file doesnt exist
-            openFile = fopen(getenv("myHISTFILE"), "w");
+        if (strlen(*commandPtr) > 0) {
+            openFile = fopen(getenv("myHISTFILE"), "a");
             if (openFile) {
                 fprintf(openFile, "%s\n", *commandPtr);
                 fclose(openFile);
+            }
+            else {
+                // open for writing if append failed, meaning file doesnt exist
+                openFile = fopen(getenv("myHISTFILE"), "w");
+                if (openFile) {
+                    fprintf(openFile, "%s\n", *commandPtr);
+                    fclose(openFile);
+                }
             }
         }
         
@@ -241,19 +243,18 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
     
     // remove preceding and trailing spaces then execute command
     trimString(commandPtr);
+    free(buffer);
 
     if (pipesEnabled == 1) {
-        pipeCommand(*commandPtr);
+        pipeCommand(commandPtr, processes, *length);
     }
     else {
-        forkProcess(*commandPtr, background, processes, length); 
+        forkProcess(commandPtr, background, processes, length); 
     }
 
     // reset both standard streams
     dup2(outFileNum, STDOUT_FILENO);
     dup2(inFileNum, STDIN_FILENO);
-
-    free(buffer);
 }
 
 void exportVar(char *command) {
@@ -287,12 +288,18 @@ void exportVar(char *command) {
             // loop till space or end of command and copy chars to buffer
             int j = i + 1;
             while (j < strlen(command) && (!isspace(command[j]) || command[j] != '/' || command[j] != ':')) { 
-                envBuffer[j] = command[j++];
-                envBuffer[j] = '\0'; 
+                envBuffer[j - i - 1] = command[j];
+                envBuffer[j - i] = '\0'; 
+                j++;
             }
             
             char *temp = getenv(envBuffer);
-            varValue = realloc(command, sizeof(char) * (strlen(command) + strlen(temp) + 1));
+
+            if (!temp) {
+                return;
+            }
+
+            varValue = realloc(varValue, sizeof(char) * (strlen(command) + strlen(temp) + 1));
             strcat(varValue, temp);
             index = strlen(varValue);          
 
@@ -351,7 +358,7 @@ void pathPrefix(char **commandPtr, char *temp, char *pathString) {
     // copy next path directories and make a recursive call on it
     int lastPathLen = strlen(currPath);
     strcpy(currPath, "");
-    
+
     index = 0;
     for (int i = lastPathLen + 1; i < strlen(pathString); i++) {
         currPath[index++] = pathString[i];
@@ -367,15 +374,15 @@ void pathPrefix(char **commandPtr, char *temp, char *pathString) {
     free(fileName);
 }
 
-void forkProcess(char *command, int background, pid_t **processes, int *length) {
-    // check for null command 
-    if (command == NULL) {
+void forkProcess(char **command, int background, pid_t **processes, int *length) {
+    // check for null *command 
+    if (*command == NULL) {
         return;
     }
 
-    // get command name without args
+    // get *command name without args
     int paramNum = 0;
-    char **parameters = getParams(command, &paramNum);
+    char **parameters = getParams(*command, &paramNum);
     if (!parameters || !parameters[0]) {
         return;
     }
@@ -392,7 +399,7 @@ void forkProcess(char *command, int background, pid_t **processes, int *length) 
     if (newProcess > 0) {
         // return parent without waiting for child
         if (background == 1) {
-            freeList(parameters, paramNum);
+            freeList(parameters, paramNum + 1);
             
             // add pid to the processes array and increment length
             if (processes != NULL && processes[0] != NULL && length != NULL) {
@@ -404,7 +411,6 @@ void forkProcess(char *command, int background, pid_t **processes, int *length) 
 
         // block parent process till child completes execution
         waitpid(newProcess, &status, 0);
-        freeList(parameters, paramNum);
     }
     else {
         // execute program
@@ -414,11 +420,20 @@ void forkProcess(char *command, int background, pid_t **processes, int *length) 
             perror("execv");
         }
         
+        freeList(parameters, paramNum + 1);
+        for (int k = 1; k < *length; k++) {
+            free(processes[k]);
+        }
+        free(processes[0]);
+        free(processes);
+        freeList(command, 1);
+
         // signal that process ended
         kill(getppid(), SIGCHLD);
         exit(status);
     }
 
+    freeList(parameters, paramNum + 1);
 }
 
 char **getParams(char *command, int *length) {
@@ -496,28 +511,30 @@ char **getParams(char *command, int *length) {
         strcpy(params[--(*length)], "");
         free(params[*length]);
     }
+
+    params = realloc(params, sizeof(char *) * ((*length) + 1));
     params[*length] = NULL;
     
     return params;
 }
 
-void pipeCommand(char *command) {
-    // check for null command 
-    if (command == NULL) {
+void pipeCommand(char **command, pid_t **processes, int length) {
+    // check for null *command 
+    if (*command == NULL) {
         return;
     }
     
-    // split command into 2 commands (before and after |)
+    // split *command into 2 *commands (before and after |)
     char *beforeCommand; 
     char *afterCommand;
-    getCommands(command, 1, &beforeCommand);
-    getCommands(command, 0, &afterCommand);
+    getCommands(*command, 1, &beforeCommand);
+    getCommands(*command, 0, &afterCommand);
     
     // remove trailing spaces
     trimString(&beforeCommand);
     trimString(&afterCommand);
 
-    // get parameters of both commands
+    // get parameters of both *commands
     int firstNum = 0;
     char **firstParams = getParams(beforeCommand, &firstNum);
     int secondNum = 0;
@@ -538,7 +555,7 @@ void pipeCommand(char *command) {
         exit(EXIT_FAILURE);
     }
     
-    // child process should execute first command and send output to its child
+    // child process should execute first *command and send output to its child
     if (newProcess == 0) {
         // fork child
         pid_t secondProcess = fork();
@@ -556,12 +573,25 @@ void pipeCommand(char *command) {
             dup2(commPipe[0], STDIN_FILENO);
             close(commPipe[0]);
             
-            // execute second command takin input from the child process
+            // execute second *command takin input from the child process
             status = execv(secondParams[0], secondParams);
 
             if (status == -1) {
                 perror("execv");
             }
+            
+            // avoid mem leaks when program encounters a problem
+            free(beforeCommand);
+            free(afterCommand);
+            freeList(firstParams, firstNum + 1);
+            freeList(secondParams, secondNum + 1);
+            freeList(command, 1);
+
+            for (int i = 1; i < length; i++) {
+                free(processes[i]);
+            }
+            free(processes[0]);
+            free(processes);
 
             exit(status);
         }
@@ -573,15 +603,28 @@ void pipeCommand(char *command) {
             dup2(commPipe[1], STDOUT_FILENO);
             close(commPipe[1]);
             
-            // execute the first command giving output to parent process
+            // execute the first *command giving output to parent process
             status = execv(firstParams[0], firstParams);
 
             if (status == -1) {
                 perror("execv");
             }
+
+            free(beforeCommand);
+            free(afterCommand);
+            freeList(firstParams, firstNum + 1);
+            freeList(secondParams, secondNum + 1);
+            freeList(command, 1);
+
+            for (int i = 1; i < length; i++) {
+                free(processes[i]); 
+            }
+            free(processes[0]);
+            free(processes);
     
             exit(status);
         }
+
     }
     else if (newProcess > 0) {  // grandparent process
         // close both ends of the pipe for this process since 
@@ -595,11 +638,11 @@ void pipeCommand(char *command) {
             perror("execv");
         }
         
-        // free command and parameter strings
+        // free *command and parameter strings
         free(beforeCommand);
         free(afterCommand);
-        freeList(firstParams, firstNum);
-        freeList(secondParams, secondNum);
+        freeList(firstParams, firstNum + 1);
+        freeList(secondParams, secondNum + 1);
     }
 }
 
@@ -645,9 +688,7 @@ void freeList(char **list, int length) {
 
     // free each string
     for (int i = 0; i < length; i++) {
-        if (list[i] != NULL) {
-            free(list[i]);
-        }
+        free(list[i]);
     }   
     free(list);
 }
@@ -659,7 +700,7 @@ void killShell(pid_t **children, int length) {
     int killVal = -1;
     
     // kill all child processes
-    for (int i = 0; i < length; i++) {
+    for (int i = 1; i < length; i++) {
         if (children != NULL && children[0][i]) {
             killVal = kill(children[0][i], SIGKILL);
         }
