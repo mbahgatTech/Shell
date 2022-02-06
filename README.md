@@ -11,10 +11,11 @@ A POSIX based shell program.
 - Shell is aware of the current working directory; you can change it using "cd" command. 
 - Supports environment variables in commands by using the '$' prefix to the command name.
 - Ability to edit environment variables by using "export" command.
+- Shell termination with all of its associated children can be killed using the "exit" command.
 
 ## Environment Variables
-myShell uses its adds its own environment variables: 
-- myPath: Default = /bin. 
+myShell adds its own environment variables: 
+- myPATH: Default = /bin. 
 - myHISTFILE: Default = ~/.CIS3110_history. 
   - Display contents using "history" command.
   - Display last n commands using "history <n>".
@@ -23,6 +24,9 @@ myShell uses its adds its own environment variables:
 
 ## Download & Run Information
 - Clone the repository into your local POSIX machine.
+- Add your preferred startup commands to the .CIS3110_profile file.
+- Copy the .CIS3110_profile to your home directory.
+- You can also copy the .CIS3110_history file to your home directory but the shell creates one anyway if it doesn't exist.
 - Launch your terminal and make sure your current working directory is where you downloaded this folder. Use cd <dirpath>.
 - Run the "make" command in your terminal to generate the executable "myShell".
 - Run the progam using "./myShell" command.
@@ -32,4 +36,4 @@ myShell uses its adds its own environment variables:
 
 ## Limitations
 - history commands can't be paired with pipes or input/output stream redirections.
-
+- Standard input redirection via "< <filename>" assumes that file exists. Otherwise, shell enters infinite loop.

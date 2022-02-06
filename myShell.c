@@ -11,7 +11,7 @@ void initShell() {
     strcat(profiles, "/.CIS3110_history");
 
     // set environment variables on startup
-    setenv("myPath", "/bin", 1);
+    setenv("myPATH", "/bin", 1);
     setenv("myHISTFILE", profiles, 1);
     setenv("myHOME", getenv("HOME"), 1);
 
@@ -238,7 +238,7 @@ void parseCommand(char **commandPtr, pid_t **processes, int *length) {
         }
         
         if (i == 0 && temp[0] && temp[0] != '.') {
-            pathPrefix(commandPtr, temp, getenv("myPath"));
+            pathPrefix(commandPtr, temp, getenv("myPATH"));
         }
 
 
@@ -387,7 +387,7 @@ void pathPrefix(char **commandPtr, char *temp, char *pathString) {
         return;
     }
 
-    // tokenize myPath directories
+    // tokenize myPATH directories
     char *currPath = malloc(sizeof(char) * (strlen(pathString) + 1));
     strcpy(currPath, "");
     
@@ -401,7 +401,7 @@ void pathPrefix(char **commandPtr, char *temp, char *pathString) {
         currPath[i + 1] = '\0';
     }
 
-    // prepend current myPath directory to fileName 
+    // prepend current myPATH directory to fileName 
     FILE *tempFile;
     char * fileName = malloc(sizeof(char) * (strlen(currPath) + strlen(temp) + 2));
     strcpy(fileName, currPath);
