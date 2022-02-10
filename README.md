@@ -1,5 +1,5 @@
 # MyShell
-A POSIX based shell program.
+A UNIX based shell program.
 
 ## Features
 - Basic shell commands with argument support.
